@@ -128,6 +128,7 @@
     <Compile Include="Source\App\Common\Cursors.cs" />
     <Compile Include="Source\App\Common\DpiScaling.cs" />
     <Compile Include="Source\App\Common\FamiStudio.cs" />
+    <Compile Include="Source\App\Common\Mcp\McpServer.cs" />
     <Compile Include="Source\App\Common\Init.cs" />
     <Compile Include="Source\App\Common\OscilloscopeGenerator.cs" />
     <Compile Include="Source\App\Common\ParamProviders.cs" />
