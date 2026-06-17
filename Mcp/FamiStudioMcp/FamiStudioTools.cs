@@ -182,6 +182,100 @@ public static class FamiStudioTools
     public static Task<string> fs_describe() => ControlClient.SendPrettyAsync("describe_project");
 
     // ---------------------------------------------------------------------------------------
+    // Semantic authoring — LIVE (edit the running app's project; changes appear instantly)
+    // ---------------------------------------------------------------------------------------
+
+    [McpServerTool, Description("List the channels of a song in the running app (names to use with fs_add_melody).")]
+    public static Task<string> fs_list_channels([Description("Song index (default 0).")] int song = 0)
+        => ControlClient.SendPrettyAsync("list_channels", new { song });
+
+    [McpServerTool, Description("List instruments in the running app's project.")]
+    public static Task<string> fs_list_instruments() => ControlClient.SendPrettyAsync("list_instruments");
+
+    [McpServerTool, Description(
+        "Add a melody to a channel in the running app using the note DSL: space-separated tokens " +
+        "'note:duration' (e.g. C4:4 F#3:2 Eb5:8), 'R:duration' for a rest, '-' to extend the previous " +
+        "note by one row, '^' for a note-off. Duration is in note-rows. Patterns are created as needed.")]
+    public static Task<string> fs_add_melody(
+        [Description("Melody in the note DSL, e.g. \"C4:4 E4:4 G4:2 R:2 G4:8\".")] string notes,
+        [Description("Channel name, e.g. Square1 (use fs_list_channels).")] string channel,
+        [Description("Song index (default 0).")] int song = 0,
+        [Description("Absolute row in the song to start at (default 0).")] int startRow = 0,
+        [Description("Instrument name (default: first instrument).")] string? instrument = null,
+        [Description("Clear existing notes in the affected range first (default false).")] bool replace = false)
+        => ControlClient.SendPrettyAsync("add_melody", new { notes, channel, song, startRow, instrument, replace });
+
+    [McpServerTool, Description("Erase notes in a row range of a channel in the running app.")]
+    public static Task<string> fs_clear_channel(
+        [Description("Channel name.")] string channel,
+        [Description("Song index (default 0).")] int song = 0,
+        [Description("First row to clear (default 0).")] int fromRow = 0,
+        [Description("End row, exclusive (default: end of song).")] int toRow = int.MaxValue)
+        => ControlClient.SendPrettyAsync("clear_channel", new { channel, song, fromRow, toRow });
+
+    [McpServerTool, Description(
+        "Set the tempo of a song in the running app to a target BPM (best effort). Returns the achieved " +
+        "BPM, since FamiStudio tempo is groove-quantized.")]
+    public static Task<string> fs_set_tempo(
+        [Description("Target beats per minute.")] double bpm,
+        [Description("Song index (default 0).")] int song = 0,
+        [Description("Notes per beat (optional; inferred from the song if omitted).")] int? notesPerBeat = null)
+        => ControlClient.SendPrettyAsync("set_tempo", notesPerBeat is null ? new { bpm, song } : new { bpm, song, notesPerBeat });
+
+    [McpServerTool, Description("Set an exact FamiStudio-tempo groove (array of frame counts) on a song in the running app.")]
+    public static Task<string> fs_set_famistudio_tempo(
+        [Description("Groove array, e.g. [10,11] — each entry is a frame count.")] int[] groove,
+        [Description("Song index (default 0).")] int song = 0,
+        [Description("Notes per beat (optional).")] int? notesPerBeat = null)
+        => ControlClient.SendPrettyAsync("set_famistudio_tempo", notesPerBeat is null ? new { groove, song } : new { groove, song, notesPerBeat });
+
+    [McpServerTool, Description("Set FamiTracker-style speed/tempo on a song in the running app (FamiTracker-tempo projects only).")]
+    public static Task<string> fs_set_famitracker_tempo(
+        [Description("Speed value.")] int speed,
+        [Description("Tempo value.")] int tempo,
+        [Description("Song index (default 0).")] int song = 0)
+        => ControlClient.SendPrettyAsync("set_famitracker_tempo", new { speed, tempo, song });
+
+    [McpServerTool, Description(
+        "Create an instrument in the running app. Use a preset (lead|bass|pad|pluck|blip) for a ready " +
+        "sound, and/or pass raw envelopes. Expansion: none|VRC6|VRC7|FDS|MMC5|N163|S5B|EPSM.")]
+    public static Task<string> fs_add_instrument(
+        [Description("Instrument name.")] string name,
+        [Description("Expansion audio type (default none).")] string expansion = "none",
+        [Description("Preset: lead|bass|pad|pluck|blip (optional).")] string? preset = null,
+        [Description("Raw volume envelope values 0-15 (optional, overrides preset).")] int[]? volumeEnvelope = null,
+        [Description("Raw duty/timbre envelope values (optional, overrides preset).")] int[]? dutyEnvelope = null)
+        => ControlClient.SendPrettyAsync("add_instrument", new { name, expansion, preset, volumeEnvelope, dutyEnvelope });
+
+    // ---------------------------------------------------------------------------------------
+    // Semantic authoring — OFFLINE (batch ops applied to a file; no running app needed)
+    // ---------------------------------------------------------------------------------------
+
+    [McpServerTool, Description(
+        "Apply a batch of semantic operations to a project file and write the result — no running app " +
+        "needed. `ops` is a JSON array of { \"op\": <name>, \"args\": {...} }, where op is one of: " +
+        "add_instrument, add_melody, clear_channel, set_tempo, set_famistudio_tempo, set_famitracker_tempo, " +
+        "list_channels, list_instruments. Same arguments as the matching fs_* tools. Output extension " +
+        ".txt writes FamiStudio Text, otherwise a native .fms. Returns the per-op log.")]
+    public static async Task<string> apply_semantic_ops(
+        [Description("Absolute path to the input project/song file.")] string inputPath,
+        [Description("Absolute output path (.fms or .txt).")] string outputPath,
+        [Description("JSON array of operations.")] string ops)
+    {
+        if (!File.Exists(inputPath))
+            return Error($"File not found: {inputPath}");
+        try
+        {
+            var log = await FamiStudioCli.SemanticApplyAsync(inputPath, outputPath, ops);
+            return Json(new { ok = true, outputPath, log });
+        }
+        catch (Exception e)
+        {
+            return Error(e.Message);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
 
     private static string Json(object value) => JsonSerializer.Serialize(value, Indented);
 

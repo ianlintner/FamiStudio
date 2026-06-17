@@ -95,6 +95,50 @@ A single `-mcpserver` argument does **not** trigger FamiStudio's command-line/ex
 | `fs_save(path)` | Save the live project (`.fms` native or `.txt`). |
 | `fs_describe()` | Summary of the live project. |
 
+### Semantic authoring — live (require `FamiStudio -mcpserver`)
+
+Higher-level "write music" tools that edit the running project and appear instantly.
+
+| Tool | Description |
+|------|-------------|
+| `fs_list_channels(song)` | Channel names to use with `fs_add_melody` (e.g. `Square1`, `Square2`, `Triangle`, `Noise`, `DPCM`). |
+| `fs_list_instruments()` | Instruments in the project. |
+| `fs_add_melody(notes, channel, song, startRow, instrument, replace)` | Add a melody using the note DSL (below). |
+| `fs_clear_channel(channel, song, fromRow, toRow)` | Erase a row range. |
+| `fs_set_tempo(bpm, song, notesPerBeat?)` | Best-effort BPM; returns the achieved BPM. |
+| `fs_set_famistudio_tempo(groove[], song, notesPerBeat?)` | Exact FamiStudio-tempo groove. |
+| `fs_set_famitracker_tempo(speed, tempo, song)` | FamiTracker speed/tempo. |
+| `fs_add_instrument(name, expansion, preset?, volumeEnvelope?, dutyEnvelope?)` | Create an instrument; presets: `lead`, `bass`, `pad`, `pluck`, `blip`. |
+
+### Semantic authoring — offline (no running app)
+
+| Tool | Description |
+|------|-------------|
+| `apply_semantic_ops(inputPath, outputPath, ops)` | Apply a JSON batch of ops to a file and save. `ops` is `[{ "op": <name>, "args": {...} }, …]` using the same names/args as the `fs_*` tools. |
+
+#### Note DSL (`add_melody`)
+
+Space-separated tokens:
+
+| Token | Meaning |
+|-------|---------|
+| `C4:4` | Note `C4` for 4 rows (`C#4`/`Db4` for accidentals; octave required) |
+| `R:2` | Rest for 2 rows |
+| `-` | Extend the previous note by one row |
+| `^` | Note-off / stop at the current row |
+
+Example: `"C4:4 E4:4 G4:2 R:2 G4:8"`. Durations are in note-rows (pattern time units).
+
+Offline batch example:
+
+```json
+[
+  { "op": "add_instrument", "args": { "name": "Lead", "preset": "lead" } },
+  { "op": "set_tempo",      "args": { "bpm": 140 } },
+  { "op": "add_melody",     "args": { "notes": "C4:4 E4:4 G4:4 C5:4", "channel": "Square1", "instrument": "Lead" } }
+]
+```
+
 ## Typical agent loop
 
 1. `fs_get_text()` → read the current song as text.

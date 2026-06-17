@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace FamiStudio
 {
@@ -131,6 +133,7 @@ namespace FamiStudio
             Console.WriteLine($"  famistudio-txt-export : Export to a FamiStudio text file (*.txt).");
             Console.WriteLine($"  famistudio-asm-export : Export to FamiStudio sound engine music assembly file(s) (*.s, *.asm).");
             Console.WriteLine($"  famistudio-asm-sfx-export : Export to FamiStudio sound engine sound effect assembly file(s) (*.s, *.asm).");
+            Console.WriteLine($"  semantic-apply : Apply semantic authoring ops from -semantic-ops:<file.json> and save (*.fms, *.txt).");
             Console.WriteLine($"  famitone2-asm-export : Export to FamiTone2 music assembly file(s) (*.s, *.asm).");
             Console.WriteLine($"  famitone2-asm-sfx-export : Export to FamiTone2 sound effect assembly file(s) (*.s, *.asm).");
             Console.WriteLine($"");
@@ -594,6 +597,43 @@ namespace FamiStudio
             }
         }
 
+        // Offline counterpart of the live semantic authoring tools. Applies a JSON list of
+        // operations to the loaded project, then writes the result.
+        //   FamiStudio in.fms semantic-apply out.fms -semantic-ops:ops.json
+        // ops.json: [ { "op": "add_instrument", "args": {...} }, { "op": "add_melody", "args": {...} } ]
+        private void SemanticApply(string outputFilename)
+        {
+            var opsPath = ParseOption("semantic-ops", (string)null);
+            if (string.IsNullOrEmpty(opsPath) || !File.Exists(opsPath))
+            {
+                Console.WriteLine("semantic-apply requires -semantic-ops:<path-to-json>");
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(opsPath));
+            var root = doc.RootElement;
+            var ops = root.ValueKind == JsonValueKind.Array
+                ? root.EnumerateArray().ToList()
+                : new List<JsonElement> { root };
+
+            foreach (var opEl in ops)
+            {
+                var op = opEl.GetProperty("op").GetString();
+                Dictionary<string, JsonElement> a = null;
+                if (opEl.TryGetProperty("args", out var argsEl) && argsEl.ValueKind == JsonValueKind.Object)
+                    a = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(argsEl.GetRawText());
+
+                var result = SemanticEngine.Apply(project, op, a);
+                Console.WriteLine($"    {op}: {JsonSerializer.Serialize(result)}");
+            }
+
+            var songIds = project.Songs.Select(s => s.Id).ToArray();
+            if (Path.GetExtension(outputFilename).ToLower() == ".txt")
+                new FamistudioTextFile().Save(project, outputFilename, songIds, false);
+            else
+                new ProjectFile().Save(project, outputFilename);
+        }
+
         private void RunUnitTest(string filename)
         {
             if (!ValidateExtension(filename, ".txt"))
@@ -667,6 +707,7 @@ namespace FamiStudio
                         case "famistudio-asm-export": FamiTone2MusicExport(outputFilename, true); break;
                         case "famistudio-asm-sfx-export": FamiTone2SfxExport(outputFilename, true); break;
                         case "unit-test": RunUnitTest(outputFilename); break;
+                        case "semantic-apply": SemanticApply(outputFilename); break;
                         default:
                             Console.WriteLine($"Unknown command {args[1]}. Use -help or -? for help.");
                             break;

@@ -61,6 +61,25 @@ internal static class FamiStudioCli
         }
     }
 
+    // Applies a JSON list of semantic operations to a project file and writes the result.
+    public static async Task<string> SemanticApplyAsync(string inputPath, string outputPath, string opsJson, CancellationToken ct = default)
+    {
+        var opsFile = Path.Combine(Path.GetTempPath(), $"fs_mcp_ops_{Guid.NewGuid():N}.json");
+        try
+        {
+            await File.WriteAllTextAsync(opsFile, opsJson, ct);
+            var result = await RunAsync(new[] { inputPath, "semantic-apply", outputPath, $"-semantic-ops:{opsFile}" }, ct);
+            if (!result.Ok || !File.Exists(outputPath))
+                throw new InvalidOperationException(
+                    $"semantic-apply failed (exit {result.ExitCode}).\n{result.StdOut}\n{result.StdErr}");
+            return result.StdOut.Trim();
+        }
+        finally
+        {
+            TryDelete(opsFile);
+        }
+    }
+
     public static void TryDelete(string path)
     {
         try { if (File.Exists(path)) File.Delete(path); } catch { /* best effort */ }

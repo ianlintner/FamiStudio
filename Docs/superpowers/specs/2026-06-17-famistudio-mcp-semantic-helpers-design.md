@@ -1,7 +1,7 @@
 # FamiStudio MCP — Semantic Authoring Helpers (v2) — Design
 
 **Date:** 2026-06-17
-**Status:** Proposed (builds on `feature/mcp-server`, PR #1)
+**Status:** Implemented on `feature/mcp-server` (offline path via CLI subcommand `semantic-apply`; verified end-to-end)
 **Depends on:** v1 MCP (embedded control server + standalone MCP server)
 
 ## Goal

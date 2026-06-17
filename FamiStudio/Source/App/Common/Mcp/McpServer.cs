@@ -263,6 +263,22 @@ namespace FamiStudio
                 case "describe_project":
                     return DescribeProject(famistudio.Project);
 
+                // --- Semantic authoring (SemanticEngine owns parsing + the model edits) ---
+                case "list_channels":
+                case "list_instruments":
+                case "add_melody":
+                case "clear_channel":
+                case "set_tempo":
+                case "set_famistudio_tempo":
+                case "set_famitracker_tempo":
+                case "add_instrument":
+                {
+                    var result = SemanticEngine.Apply(famistudio.Project, command, args);
+                    if (command != "list_channels" && command != "list_instruments")
+                        famistudio.McpRefresh(); // mutating op: refresh the running app
+                    return result;
+                }
+
                 default:
                     throw new Exception($"Unknown command: '{command}'.");
             }

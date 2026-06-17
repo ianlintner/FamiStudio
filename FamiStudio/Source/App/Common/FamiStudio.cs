@@ -935,6 +935,13 @@ namespace FamiStudio
             InitProject();
             window?.Refresh();
         }
+
+        // Refresh the UI after an in-place edit (semantic ops) so changes are visible immediately.
+        public void McpRefresh()
+        {
+            MarkEverythingDirty();
+            window?.Refresh();
+        }
         #endregion
 
         private void FreeExportDialog()
