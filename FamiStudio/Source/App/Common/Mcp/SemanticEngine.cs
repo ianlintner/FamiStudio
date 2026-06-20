@@ -67,11 +67,17 @@ namespace FamiStudio
         // Melody
         // -----------------------------------------------------------------------------------
 
-        // Note-input DSL (whitespace-separated tokens):
+        // Note-input DSL (whitespace-separated tokens). Durations are in musical ROWS:
         //   note:dur   musical note for <dur> rows           e.g. C4:4  F#3:2  Eb5:8
         //   R:dur      rest for <dur> rows
         //   -          extend the previous musical note by 1 row (and advance 1 row)
         //   ^          stop/note-off at the current row (advance 1 row)
+        //
+        // IMPORTANT: FamiStudio stores note positions and durations in FRAMES, where one row =
+        // song.NoteLength frames (e.g. NoteLength 10 → a 16-row pattern is 160 frames). Likewise
+        // song.PatternLength is in frames. So everything below converts rows → frames before
+        // touching the model; placing a note at the raw row index would cram a whole bar into the
+        // first NoteLength frames (the classic "blerb then silence" bug).
         public static Dictionary<string, object> AddMelody(
             Project project, string notes, string channelName, int songIndex,
             int startRow, string instrumentName, bool replace)
@@ -91,22 +97,24 @@ namespace FamiStudio
             if (tokens.Length == 0)
                 throw new Exception("No notes provided.");
 
-            // First pass: compute the end row so we can size the song and optionally clear the range.
+            var noteLength = Math.Max(1, song.NoteLength); // frames per row
+            var patternFrames = song.PatternLength;        // pattern length, in frames
+            if (patternFrames <= 0)
+                throw new Exception("Song has an invalid pattern length.");
+
+            // First pass: total length in rows → frames, so we can size the song / clear the range.
             var endRow = startRow;
             foreach (var t in tokens)
                 endRow += TokenRows(t);
+            var endFrame = endRow * noteLength;
 
-            var patternLength = song.PatternLength;
-            if (patternLength <= 0)
-                throw new Exception("Song has an invalid pattern length.");
-
-            EnsureSongLength(song, (endRow + patternLength - 1) / patternLength);
+            EnsureSongLength(song, (endFrame + patternFrames - 1) / patternFrames);
 
             if (replace)
-                ClearRange(channel, startRow, endRow, patternLength);
+                ClearRange(channel, startRow * noteLength, endFrame, patternFrames);
 
-            // Second pass: write notes.
-            var row = startRow;
+            // Second pass: write notes, tracking the absolute position in FRAMES.
+            var frame = startRow * noteLength;
             Note lastMusical = null;
             var written = 0;
 
@@ -115,17 +123,17 @@ namespace FamiStudio
                 if (token == "-")
                 {
                     if (lastMusical != null)
-                        lastMusical.Duration += 1;
-                    row += 1;
+                        lastMusical.Duration += noteLength;
+                    frame += noteLength;
                     continue;
                 }
 
                 if (token == "^")
                 {
-                    var stop = GetOrCreateNote(channel, row, patternLength);
+                    var stop = GetOrCreateNote(channel, frame, patternFrames);
                     stop.Value = Note.NoteStop;
                     lastMusical = null;
-                    row += 1;
+                    frame += noteLength;
                     continue;
                 }
 
@@ -133,7 +141,7 @@ namespace FamiStudio
 
                 if (head.Equals("R", StringComparison.OrdinalIgnoreCase))
                 {
-                    row += dur;
+                    frame += dur * noteLength;
                     continue;
                 }
 
@@ -141,13 +149,13 @@ namespace FamiStudio
                 if (value == Note.NoteInvalid || value < Note.MusicalNoteMin || value > Note.MusicalNoteMax)
                     throw new Exception($"Invalid note '{head}' in token '{token}'. Use names like C4, F#3, Eb5.");
 
-                var note = GetOrCreateNote(channel, row, patternLength);
+                var note = GetOrCreateNote(channel, frame, patternFrames);
                 note.Value = (byte)value;
                 note.Instrument = instrument;
-                note.Duration = dur;
+                note.Duration = dur * noteLength; // duration in frames
                 lastMusical = note;
                 written++;
-                row += dur;
+                frame += dur * noteLength;
             }
 
             return new Dictionary<string, object>
@@ -158,6 +166,7 @@ namespace FamiStudio
                 ["notesWritten"] = written,
                 ["startRow"] = startRow,
                 ["endRow"] = endRow,
+                ["noteLength"] = noteLength,
                 ["instrument"] = instrument.Name,
             };
         }
@@ -336,7 +345,11 @@ namespace FamiStudio
             var channel = song.GetChannelByType(channelType)
                 ?? throw new Exception($"Channel '{channelName}' is not present in this project's expansion.");
 
-            ClearRange(channel, fromRow, toRow, song.PatternLength);
+            var noteLength = Math.Max(1, song.NoteLength);
+            var songFrames = song.Length * song.PatternLength;
+            var fromFrame = (long)fromRow * noteLength;
+            var toFrame = toRow >= int.MaxValue / Math.Max(1, noteLength) ? songFrames : (long)toRow * noteLength;
+            ClearRange(channel, (int)Math.Min(fromFrame, songFrames), (int)Math.Min(toFrame, songFrames), song.PatternLength);
             return new Dictionary<string, object> { ["ok"] = true, ["channel"] = channelName, ["fromRow"] = fromRow, ["toRow"] = toRow };
         }
 
@@ -400,10 +413,12 @@ namespace FamiStudio
                 song.SetLength(Math.Min(neededPatterns, Song.MaxLength));
         }
 
-        private static Note GetOrCreateNote(Channel channel, int absoluteRow, int patternLength)
+        // absoluteFrame and patternFrames are both in FRAMES (note positions inside a pattern are
+        // keyed by frame in FamiStudio's model).
+        private static Note GetOrCreateNote(Channel channel, int absoluteFrame, int patternFrames)
         {
-            var patternIdx = absoluteRow / patternLength;
-            var timeInPattern = absoluteRow % patternLength;
+            var patternIdx = absoluteFrame / patternFrames;
+            var frameInPattern = absoluteFrame % patternFrames;
 
             var pattern = channel.PatternInstances[patternIdx];
             if (pattern == null)
@@ -411,17 +426,24 @@ namespace FamiStudio
                 pattern = channel.CreatePattern();
                 channel.PatternInstances[patternIdx] = pattern;
             }
-            return pattern.GetOrCreateNoteAt(timeInPattern);
+            return pattern.GetOrCreateNoteAt(frameInPattern);
         }
 
-        private static void ClearRange(Channel channel, int fromRow, int toRow, int patternLength)
+        // Clears notes whose frame position falls in [fromFrame, toFrame).
+        private static void ClearRange(Channel channel, int fromFrame, int toFrame, int patternFrames)
         {
-            for (var row = fromRow; row < toRow; row++)
+            for (var patternIdx = fromFrame / patternFrames; patternIdx <= (toFrame - 1) / patternFrames; patternIdx++)
             {
-                var patternIdx = row / patternLength;
-                if (patternIdx >= channel.PatternInstances.Length) break;
+                if (patternIdx < 0 || patternIdx >= channel.PatternInstances.Length) break;
                 var pattern = channel.PatternInstances[patternIdx];
-                pattern?.Notes.Remove(row % patternLength);
+                if (pattern == null) continue;
+
+                var patternStart = patternIdx * patternFrames;
+                var localFrom = Math.Max(0, fromFrame - patternStart);
+                var localTo = Math.Min(patternFrames, toFrame - patternStart);
+                var keys = pattern.Notes.Keys.Where(k => k >= localFrom && k < localTo).ToList();
+                foreach (var k in keys)
+                    pattern.Notes.Remove(k);
             }
         }
 
