@@ -31,6 +31,7 @@ namespace FamiStudio
         private ExportDialog exportDialog;
         private LogDialog logDialog;
         private LogProgressDialog progressLogDialog;
+        private McpServer mcpServer;
 
         private int selectedChannelIndex;
         private long forceDisplayChannelMask = 0;
@@ -683,7 +684,13 @@ namespace FamiStudio
             #endif
 
             Initialize(win, filename);
+
+            // Start the optional MCP control server if launched with "-mcpserver[:port]".
+            mcpServer = McpServer.TryStart(this, args);
+
             window.Run();
+
+            mcpServer?.Stop();
 
             return true;
         }
@@ -902,6 +909,40 @@ namespace FamiStudio
                     Settings.LastProjectFile = "";
             });
         }
+
+        #region MCP control API
+        // Prompt-free project operations used by the embedded MCP control server (McpServer).
+        // These intentionally skip the "save current project?" dialog so agents can drive the app
+        // without modal interruptions. They must be called on the UI thread (McpServer queues them).
+
+        public void McpNewProject()
+        {
+            UnloadProject();
+            project = new Project(true);
+            InitProject();
+        }
+
+        public void McpOpenProjectFile(string filename)
+        {
+            UnloadProject();
+            OpenProjectInternal(filename);
+        }
+
+        public void McpLoadProjectInstance(Project newProject)
+        {
+            UnloadProject();
+            project = newProject;
+            InitProject();
+            window?.Refresh();
+        }
+
+        // Refresh the UI after an in-place edit (semantic ops) so changes are visible immediately.
+        public void McpRefresh()
+        {
+            MarkEverythingDirty();
+            window?.Refresh();
+        }
+        #endregion
 
         private void FreeExportDialog()
         {
@@ -2444,6 +2485,7 @@ namespace FamiStudio
 
             ProcessAudioDeviceChanges();
             ProcessQueuedMidiNotes();
+            mcpServer?.ProcessPendingCommands();
             ConditionalMarkControlsDirty();
             ConditionalShowTutorial();
             ConditionalReconnectOscilloscope();
